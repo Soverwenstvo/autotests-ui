@@ -48,7 +48,7 @@ class TestRequestWorkflow:
         assert response.status_code == 200
         print(f"✓ InteractionId создан: {interaction_id}")
 
-        time.sleep(10)
+        time.sleep(30)
 
         # ==============================
         # 2. ПОЛУЧЕНИЕ USER TOKEN
@@ -145,8 +145,8 @@ class TestRequestWorkflow:
             if task_uuid:
                 break
 
-            print(f"Попытка {attempt + 1}/{max_attempts}: задача не найдена, ждём 2 сек...")
-            time.sleep(2)
+            print(f"Попытка {attempt + 1}/{max_attempts}: задача не найдена, ждём 5 сек...")
+            time.sleep(5)
 
         assert task_uuid is not None, \
             f"Задача с interaction_id={interaction_id} не найдена в листинге"
