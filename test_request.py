@@ -1,4 +1,5 @@
 import requests
+import time
 import uuid
 from playwright.sync_api import Page, expect
 
@@ -47,6 +48,8 @@ class TestRequestWorkflow:
         assert response.status_code == 200
         print(f"✓ InteractionId создан: {interaction_id}")
 
+        time.sleep(10)
+
         # ==============================
         # 2. ПОЛУЧЕНИЕ USER TOKEN
         # ==============================
@@ -79,7 +82,7 @@ class TestRequestWorkflow:
 
         listing_payload = {
             "page": 1,
-            "page_size": 10,
+            "page_size": 100,
             "output_type": "json",
             "order_by": "-number",
             "fields": {
@@ -109,40 +112,41 @@ class TestRequestWorkflow:
             "sort": "-number"
         }
 
-        response = requests.post(
-            listing_url,
-            headers=user_headers,
-            json=listing_payload
-        )
-
-        assert response.status_code == 200, \
-            f"Ошибка получения листинга: {response.text}"
-
-        data = response.json()
-
-        assert isinstance(data, dict)
-
         # ====================================
-        # 1.4 Поиск задачи по interaction_id
+        # 1.4 Поиск задачи по interaction_id (с retry)
         # ====================================
 
-        results = data.get("results", [])
         task_uuid = None
+        max_attempts = 5
 
-        # Проходим по results
-        for task in results:
-            # Проверяем, есть ли notification (у некоторых задач null)
-            notification = task.get("notification")
-            if notification is None:
-                continue
-            # Достаём interaction_uuid из notification.extra.task.fields.interaction_uuid
-            extra = notification.get("extra", {})
-            task_fields = extra.get("task", {}).get("fields", {})
-            # Сравниваем с interaction_id из п. 1.1
-            if task_fields.get("interaction_uuid") == interaction_id:
-                # Сохраняем fields.uuid задачи в переменную task_uuid (для перехода по ссылке /task/{uuid} в п. 2.3)
-                task_uuid = task.get("fields", {}).get("uuid")
+        for attempt in range(max_attempts):
+            response = requests.post(
+                listing_url,
+                headers=user_headers,
+                json=listing_payload
+            )
+
+            assert response.status_code == 200, \
+                f"Ошибка получения листинга: {response.text}"
+
+            data = response.json()
+            results = data.get("results", [])
+
+            for task in results:
+                notification = task.get("notification")
+                if notification is None:
+                    continue
+                extra = notification.get("extra", {})
+                task_fields = extra.get("task", {}).get("fields", {})
+                if task_fields.get("interaction_uuid") == interaction_id:
+                    task_uuid = task.get("fields", {}).get("uuid")
+                    break
+
+            if task_uuid:
                 break
+
+            print(f"Попытка {attempt + 1}/{max_attempts}: задача не найдена, ждём 2 сек...")
+            time.sleep(2)
 
         assert task_uuid is not None, \
             f"Задача с interaction_id={interaction_id} не найдена в листинге"
