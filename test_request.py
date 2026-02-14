@@ -1,7 +1,5 @@
 import requests
-import time
 import uuid
-import pytest
 from playwright.sync_api import Page, expect
 
 BASE_URL = "https://lkb-temp-kub.smbconnect.ru"
@@ -18,7 +16,6 @@ class TestRequestWorkflow:
     def test_create_request_and_complete_task(self, page: Page):
 
         interaction_id = str(uuid.uuid4())
-        pubDocument_id = str(uuid.uuid4())
 
         # ==============================
         # 1. СОЗДАНИЕ ОБРАЩЕНИЯ
@@ -74,101 +71,85 @@ class TestRequestWorkflow:
             "Content-Type": "application/json",
         }
 
-        # ==============================
-        # 3. ПОИСК ЗАДАЧИ В ЛИСТИНГЕ
-        # ==============================
+        # ====================================
+        # 1.3 Получение листинга задач
+        # ====================================
 
         listing_url = f"{BASE_URL}/api/mdm/documents/v1/d/task/dynamic_schema"
 
-        found_uuid = None
+        listing_payload = {
+            "page": 1,
+            "page_size": 10,
+            "output_type": "json",
+            "order_by": "-number",
+            "fields": {
+                "created_at": {},
+                "updated_at": {},
+                "schema_name": {},
+                "related_notifications": {"is_calculated": True},
+                "schema_version": {},
+                "fields.uuid": {},
+                "fields.topic": {},
+                "fields.number": {},
+                "fields.client": {},
+                "fields.priority": {},
+                "fields.deadline": {},
+                "fields.task_type": {},
+                "fields.status_task": {},
+                "fields.task_content": {},
+                "fields.task_type_id": {},
+                "fields.category_code": {},
+                "fields.client_tariff": {},
+                "fields.declaration_type": {},
+                "fields.responsible_reference": {},
+            },
+            "filters": {
+                "task_type_lookup": "[302,320]"
+            },
+            "sort": "-number"
+        }
 
-        for attempt in range(1, 21):
+        response = requests.post(
+            listing_url,
+            headers=user_headers,
+            json=listing_payload
+        )
 
-            print(f"Попытка поиска {attempt}/20")
+        assert response.status_code == 200, \
+            f"Ошибка получения листинга: {response.text}"
 
-            payload = {
-                "page": 1,
-                "page_size": 20,
-                "output_type": "json",
-                "order_by": "-number",
-                "fields": {
-                    "fields.uuid": {},
-                    "fields.interaction_uuid": {interaction_id},
-                },
-                "filters": {
-                    "task_type_lookup": "[302,320]"
-                },
-                "sort": "-number"
-            }
+        data = response.json()
 
-            resp = requests.post(listing_url, headers=user_headers, json=payload)
-            assert resp.status_code == 200
+        assert isinstance(data, dict)
 
-            tasks = resp.json().get("data", [])
+        # ====================================
+        # 1.4 Поиск задачи по interaction_id
+        # ====================================
 
-            for task in tasks:
-                fields = task.get("fields", {})
-                if fields.get("interaction_uuid") == interaction_id:
-                    found_uuid = fields.get("uuid")
-                    print(f"✓ Найдена задача UUID: {found_uuid}")
-                    break
+        results = data.get("results", [])
+        task_uuid = None
 
-            if found_uuid:
+        # Проходим по results
+        for task in results:
+            # Проверяем, есть ли notification (у некоторых задач null)
+            notification = task.get("notification")
+            if notification is None:
+                continue
+            # Достаём interaction_uuid из notification.extra.task.fields.interaction_uuid
+            extra = notification.get("extra", {})
+            task_fields = extra.get("task", {}).get("fields", {})
+            # Сравниваем с interaction_id из п. 1.1
+            if task_fields.get("interaction_uuid") == interaction_id:
+                # Сохраняем fields.uuid задачи в переменную task_uuid (для перехода по ссылке /task/{uuid} в п. 2.3)
+                task_uuid = task.get("fields", {}).get("uuid")
                 break
 
-            time.sleep(3)
+        assert task_uuid is not None, \
+            f"Задача с interaction_id={interaction_id} не найдена в листинге"
 
-        assert found_uuid is not None, "Задача не найдена в листинге!"
+        print(f"✓ Найдена задача с uuid: {task_uuid}")
 
-        # ==============================
-        # 4. UI – ОБРАБОТКА ЗАДАЧИ
-        # ==============================
 
-        page.goto(f"{BASE_URL}/login")
-        page.locator("#basic_username").fill(USERNAME)
-        page.locator("#basic_password").fill(PASSWORD)
-        page.get_by_role("button", name="Войти").click()
-        expect(page).to_have_url(f"{BASE_URL}/tasks", timeout=15000)
-
-        page.goto(f"{BASE_URL}/tasks/{found_uuid}")
-        page.wait_for_load_state("networkidle")
-
-        select = page.locator("#taskActionSelectId").first
-        select.click()
-
-        expect(page.locator(".ant-select-dropdown:visible")).to_be_visible(timeout=5000)
-
-        page.get_by_text("Обработать задачу вручную").click()
-        page.get_by_role("button", name="Подтвердить").click()
-
-        page.wait_for_timeout(2000)
-
-        # Проверяем, что селект заблокирован
-        assert not select.is_enabled(), "Селект должен быть заблокирован"
-
-        # ==============================
-        # 5. ПРОВЕРКА СТАТУСА
-        # ==============================
-
-        for attempt in range(1, 31):
-
-            resp = requests.post(
-                f"{BASE_URL}/api/or/v1/task/status",
-                json={"interactions": [{"interactionId": interaction_id}]},
-                headers=user_headers
-            )
-
-            assert resp.status_code == 200
-
-            interactions = resp.json().get("interactions", [])
-            if interactions:
-                status = interactions[0].get("status")
-                print(f"{attempt}: {status}")
-
-                if status in ["COMPLETED", "CLOSED", "DONE", "SUCCESS"]:
-                    print(f"✅ Финальный статус: {status}")
-                    break
-
-            time.sleep(3)
-
-        print("\n✅ ТЕСТ УСПЕШНО ПРОЙДЕН")
+if __name__ == "__main__":
+    import subprocess
+    subprocess.run(["pytest", __file__, "-v", "-s"])

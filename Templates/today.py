@@ -133,3 +133,28 @@ def test_create_request_and_get_listing():
     data = response.json()
 
     assert isinstance(data, dict)
+
+    # ====================================
+    # 1.4 Поиск задачи по interaction_id
+    # ====================================
+
+    results = data.get("results", [])
+    task_uuid = None
+
+    # Проходим по results
+    for task in results:
+        # Проверяем, есть ли notification (у некоторых задач null)
+        notification = task.get("notification")
+        if notification is None:
+            continue
+        # Достаём interaction_uuid из notification.extra.task.fields.interaction_uuid
+        extra = notification.get("extra", {})
+        task_fields = extra.get("task", {}).get("fields", {})
+        # Сравниваем с interaction_id из п. 1.1
+        if task_fields.get("interaction_uuid") == interaction_id:
+            # Сохраняем fields.uuid задачи в переменную task_uuid (для перехода по ссылке /task/{uuid} в п. 2.3)
+            task_uuid = task.get("fields", {}).get("uuid")
+            break
+
+    assert task_uuid is not None, \
+        f"Задача с interaction_id={interaction_id} не найдена в листинге"
